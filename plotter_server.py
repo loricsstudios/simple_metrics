@@ -20,14 +20,14 @@ CONFIG = {
     'x_label': 'Time',
     'y_label': 'Value',
     # 'x_range': (0, 100),
-    'y_range': (0, 100),
+    'y_range': (0, 110),
     'data_sets': {
         'set1': {'color': 'r', 'label': 'Target security', 'marker': 'o'},
         'set2': {'color': 'b', 'label': 'Target money', 'marker': 's'},
         'set3': {'color': 'g', 'label': 'Overall money', 'marker': ','},
     },
     'legend_location': 'upper right',
-    'max_points': 180,
+    # 'max_points': 180,
 }
 
 all_plots = {
@@ -39,28 +39,27 @@ all_plots = {
         'ax': None,
         'lines': {},
         'TTL': None, 
+        'max_points': 180,
     },
-    # '2':{
-    #     'data_sets':  {set_name: {'x': [], 'y': []} for set_name in CONFIG['data_sets']},
-    #     'fig': None,
-    #     'ax': None,
-    #     'lines': {},
-    #     'TTL': None, 
-    # }
 }
 
 all_plots[1]['fig'], all_plots[1]['ax'] = plt.subplots()
-# all_plots['2']['fig'], all_plots['2']['ax'] = plt.subplots()
 
 def update_plot_config(plot_id, data):
     global all_plots
+    try:
+        all_plots[plot_id]['max_points'] = data.max_points 
+    except:
+        all_plots[plot_id]['max_points'] = CONFIG['max_points']
+    
     ax = all_plots[plot_id]['ax']
     ax.clear()
     ax.set_title(data.plot_title ) # mandatory
     ax.set_xlabel(data.x_label)
     ax.set_ylabel(data.y_label)
     # ax.set_xlim(CONFIG['x_range']) # this is set dynamically
-    ax.set_ylim(data.y_range)
+    # ax.set_ylim(data.y_range)
+    ax.set_ylim(CONFIG['y_range'])
     # mandatory, no defaults
     all_plots[plot_id]['lines'] = {}
     for k,v in data.data_sets.items():
@@ -86,12 +85,13 @@ async def receive_data(plot_id: int, set_name: str, data: DataPoint):
         return {"status": "Invalid set name!"}
 
     data_sets = all_plots[plot_id]['data_sets']
-    data_sets[set_name]['x'].append(data.x)
-    data_sets[set_name]['y'].append(data.y)
+    dsn = data_sets[set_name]
+    dsn['x'].append(data.x)
+    dsn['y'].append(data.y)
     
-    if len(data_sets[set_name]['x']) > CONFIG['max_points']:
-        data_sets[set_name]['x'].pop(0)
-        data_sets[set_name]['y'].pop(0)
+    while len(dsn['x']) > all_plots[plot_id]['max_points']:
+        dsn['x'].pop(0)
+        dsn['y'].pop(0)
     
     print(f"Received data point for id={plot_id} set={set_name}: x={data.x}, y={data.y}")
     return {"status": "Data received"}
@@ -122,28 +122,34 @@ def update_plot(frame): # tried to have it parametrizable but no bueno :/
 
     for plot in all_plots.values():    
         data_sets = plot['data_sets']
+        pax = plot['ax']
 
         all_x = [x for set_data in data_sets.values() for x in set_data['x']]
         if all_x:
             x_min, x_max = min(all_x), max(all_x)
-            plot['ax'].set_xlim(x_min, x_max)
+            pax.set_xlim(x_min, x_max)
 
         for set_name, line in plot['lines'].items():
             line.set_data(data_sets[set_name]['x'], data_sets[set_name]['y'])
             ret.append(line)
-        for v in data_sets.values(): # highly experimental /debug
-            # print(v['anot'])
-            v['anot'].set_position((v['x'][-1], v['y'][-1]))
-            ret.append(v['anot'])
-
-        
-        plot['ax'].relim()
-        plot['ax'].autoscale_view(scalex=True, scaley=True)  # Only autoscale y-axis
+        # experimental - dynamically changing legend based on whats in view
+        pax.relim()
+        pax.autoscale_view(scalex=True, scaley=True)  # Only autoscale y-axis
+        visible_lines = []
+        visible_labels = []
+        for line in pax.get_lines():
+            if line.get_visible():
+                xdata = line.get_xdata()
+                ydata = line.get_ydata()
+                if len(xdata) > 0:
+                    xmin, xmax = pax.get_xlim()
+                    ymin, ymax = pax.get_ylim()
+                    if (xmin <= xdata[-1] <= xmax) and (ymin <= ydata[-1] <= ymax):
+                        visible_lines.append(line)
+                        visible_labels.append(line.get_label())
+        pax.legend(visible_lines, visible_labels, loc='upper right')
     return ret
 
-    # for i, (x, y) in enumerate(samples): #maybe belongs here? trying to annotate axes
-    # plt.plot(x, y)
-    # plt.text(x[-1], y[-1], f'sample {i}')
 # return must be a tuple or list of ax.plot and similar ax. objects
 
 
