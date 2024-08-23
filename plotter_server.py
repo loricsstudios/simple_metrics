@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Any, Dict
 import uvicorn
+# import json
 
 app = FastAPI()
 
@@ -20,62 +21,103 @@ CONFIG = {
     'x_label': 'Time',
     'y_label': 'Value',
     # 'x_range': (0, 100),
-    'y_range': (0, 110),
+    'y_range': (0, 200),
     'data_sets': {
         'set1': {'color': 'r', 'label': 'Target security', 'marker': 'o'},
         'set2': {'color': 'b', 'label': 'Target money', 'marker': 's'},
         'set3': {'color': 'g', 'label': 'Overall money', 'marker': ','},
     },
-    'legend_location': 'upper right',
-    # 'max_points': 180,
+    'legend_location': 'upper left',
+    'max_points': 180,
 }
 
 all_plots = {
-    1:{
-        'data_sets':  {
-                # 'empty': {'x': [], 'y': [], 'anot': None} 
-            },
-        'fig': None,
-        'ax': None,
-        'lines': {},
-        'TTL': None, 
-        'max_points': 180,
-    },
+    # 1:{},2:{}
+    # 1:{
+    #     # 'data_sets':  {
+    #     #     },
+    #     # 'fig': None,
+    #     # 'ax': None,
+    #     # 'lines': {},
+        
+    #     # 'max_points': 180,
+    #     # 'legend_location': 'upper left',
+    # },
 }
 
-all_plots[1]['fig'], all_plots[1]['ax'] = plt.subplots()
+for x in range(2):
+    all_plots[x] = {}
+    ap = all_plots[x]
+    ap['fig'], ap['ax'] = plt.subplots()
+    ap['data_sets'] = {}
+    ap['lines'] = {}
+    ap['legend_location'] = CONFIG['legend_location']
+    ap['max_points'] = CONFIG['max_points']
+
+# all_plots[2]['fig'], all_plots[2]['ax'] = plt.subplots()
+# all_plots[1]['data_sets'] = {}
 
 def update_plot_config(plot_id, data):
     global all_plots
+    ap = all_plots[plot_id]
     try:
-        all_plots[plot_id]['max_points'] = data.max_points 
+        ap['max_points'] = int(data.max_points)
     except:
-        all_plots[plot_id]['max_points'] = CONFIG['max_points']
-    
-    ax = all_plots[plot_id]['ax']
+        ap['max_points'] = CONFIG['max_points']
+    try:
+        ap['legend_location'] = data.legend_location
+    except:
+        ap['legend_location'] = CONFIG['legend_location']
+
+    ax = ap['ax']
     ax.clear()
     ax.set_title(data.plot_title ) # mandatory
     ax.set_xlabel(data.x_label)
     ax.set_ylabel(data.y_label)
     # ax.set_xlim(CONFIG['x_range']) # this is set dynamically
-    # ax.set_ylim(data.y_range)
-    ax.set_ylim(CONFIG['y_range'])
+    ax.set_ylim((data.y_range[0],data.y_range[1])) # add try except here
+    # ax.set_ylim(CONFIG['y_range'])
     # mandatory, no defaults
-    all_plots[plot_id]['lines'] = {}
+    ap['lines'] = {}
     for k,v in data.data_sets.items():
-        all_plots[plot_id]['lines'][k] = ax.plot([], [], color=v.color, marker= v.marker, label=v.label)[0]
+        ap['lines'][k] = ax.plot([], [], color=v.color, marker= v.marker, label=v.label)[0]
         anot = ax.annotate(k, xy=(0, 0), xytext=(5, 0), textcoords='offset points', ha='left', va='center', color=v.color) 
-        all_plots[plot_id]['data_sets'][k] = {'x': [], 'y': [], 'anot': anot}
-    ax.legend(loc=data.legend_location, prop={'size': 6})
+        ap['data_sets'][k] = {'x': [], 'y': [], 'anot': anot}
+    ax.legend(loc=ap['legend_location'], prop={'size': 6})
+    ax.grid(axis='x')
 
 class DataPoint(BaseModel):
     x: float
     y: float
 
+class DataPointList(BaseModel):
+    datapoints: list[DataPoint]
 
-# @app.delete("/id/{plot_id}")
-# async def despawn_plot(plot_id: str):
-#     return {"status" : f"hello world! plot id to be deleted: {plot_id}"}
+# class DataMultiset(BaseModel):
+#     multiset: Dict[str, DataPoint]
+
+class DataMegaset(BaseModel):
+    megaset: Dict[str, DataPointList]
+
+@app.post("/id/{plot_id}/megaset") 
+async def receive_multiset_data(plot_id: int, data: DataMegaset):
+    if plot_id not in all_plots.keys():
+        return {"status": "Attempting to send data to nonexistant plot, spawn it first via /config endpoint!"}
+    data_sets = all_plots[plot_id]['data_sets']
+    for k,v in data.megaset.items():
+        # print(f'DBG megaset k: {k} v{v}')
+        dsn = data_sets[k]
+        for dp in v.datapoints:
+            dsn['x'].append(dp.x)
+            dsn['y'].append(dp.y)
+        while len(dsn['x']) > all_plots[plot_id]['max_points']:
+            dsn['x'].pop(0)
+            dsn['y'].pop(0)
+    # if set_name not in all_plots[plot_id]['data_sets']:
+    #     return {"status": "Invalid set name!"}
+    print(f"Received data point megaset for id={plot_id} ") # maybe more debug here
+    return {"status": "Megaset received"}
+
 
 @app.post("/id/{plot_id}/set/{set_name}") # U/CRUD
 async def receive_data(plot_id: int, set_name: str, data: DataPoint):
@@ -106,6 +148,8 @@ class DataFrame(BaseModel):
     x_label: str
     y_label: str
     data_sets: Dict[str, DataSet] = Field(..., min_items=1)
+    y_range: list
+    max_points: int
 
     class Config:
         extra = "allow" 
@@ -147,7 +191,7 @@ def update_plot(frame): # tried to have it parametrizable but no bueno :/
                     if (xmin <= xdata[-1] <= xmax) and (ymin <= ydata[-1] <= ymax):
                         visible_lines.append(line)
                         visible_labels.append(line.get_label())
-        pax.legend(visible_lines, visible_labels, loc='upper right')
+        pax.legend(visible_lines, visible_labels, loc=plot['legend_location'], prop={'size': 6})
     return ret
 
 # return must be a tuple or list of ax.plot and similar ax. objects
